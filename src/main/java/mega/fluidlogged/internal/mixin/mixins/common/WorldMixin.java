@@ -42,6 +42,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
+import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.Vec3;
 import net.minecraft.world.NextTickListEntry;
 import net.minecraft.world.World;
 import net.minecraft.world.chunk.Chunk;
@@ -145,6 +147,32 @@ public abstract class WorldMixin implements FLBlockAccess, FLWorld {
             return fluidBlock;
         }
         return ogBlock;
+    }
+
+    // Empty-bucket raycasts miss fluidlogged blocks because all fluidloggable blocks should have partial collision.
+    // This inserts the fluid's full-cube ray-trace as a fallback so the player can aim at the rendered fluid.
+    // This means for example if you aim at the fluid part of a fluidlogged fence post for example, it will fill the
+    // bucket and remove the fluid. However this does not work if the cursor is within the actual bounds of the block,
+    // because the block's activation takes precedence over the bucket fill, so we never even reach here.
+    @WrapOperation(method = "func_147447_a",
+                   at = @At(value = "INVOKE",
+                            target = "Lnet/minecraft/block/Block;collisionRayTrace(Lnet/minecraft/world/World;IIILnet/minecraft/util/Vec3;Lnet/minecraft/util/Vec3;)Lnet/minecraft/util/MovingObjectPosition;"),
+                   require = 2)
+    private MovingObjectPosition fluidLoggedRayTrace(Block block, World world, int x, int y, int z, Vec3 start, Vec3 end, Operation<MovingObjectPosition> original,
+                                                     @Local(argsOnly = true, ordinal = 0) boolean stopOnLiquid) {
+        if (stopOnLiquid) {
+            val fluid = ((FLBlockAccess) world).fl$getFluid(x, y, z);
+            if (fluid != null) {
+                val fluidBlock = fluid.getBlock();
+                if (fluidBlock != null) {
+                    val fluidHit = fluidBlock.collisionRayTrace(world, x, y, z, start, end);
+                    if (fluidHit != null) {
+                        return fluidHit;
+                    }
+                }
+            }
+        }
+        return original.call(block, world, x, y, z, start, end);
     }
 
     // endregion
